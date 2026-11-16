@@ -34,12 +34,15 @@ interface Ctx {
   notes: Note[]
   audit: AuditEntry[]
   me: User | null
+  aal: 'aal1' | 'aal2' | null
+  hasVerifiedMfa: boolean
   isAdmin: boolean
   loadingAuth: boolean
   loadingCases: boolean
   loadingUsers: boolean
   loadingEvidence: boolean
-  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
+  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string; nextStep?: 'mfa-setup' | 'mfa-verify' | 'dashboard' }>
+  completeMfaLogin: (action: 'enroll' | 'verify') => Promise<void>
   logout: () => Promise<void>
   refreshCases: () => Promise<void>
   refreshUsers: () => Promise<void>
@@ -62,6 +65,9 @@ interface Ctx {
   transferPermission: (e: Evidence) => Perm
   transferCustody: (evidenceId: string, toId: string, reason: string, remarks: string) => Promise<void>
   saveUser: (u: Partial<User> & { name: string; email: string; role: Role; status: User['status'] }) => Promise<{ ok: boolean; error?: string }>
+  resendInvite: (userId: string) => Promise<{ ok: boolean; error?: string }>
+  resetUserMfa: (userId: string) => Promise<{ ok: boolean; error?: string }>
+  setupPassword: (password: string, confirmPassword: string) => Promise<void>
   renameMe: (name: string, email?: string) => Promise<void>
   toasts: Toast[]
   toast: (message: string, tone?: Toast['tone']) => void
@@ -135,6 +141,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [audit, setAudit] = useState<AuditEntry[]>([])
   const [files] = useState<Record<string, File>>({})
   const [me, setMe] = useState<User | null>(null)
+  const [aal, setAal] = useState<'aal1' | 'aal2' | null>(null)
+  const [hasVerifiedMfa, setHasVerifiedMfa] = useState(false)
   const [loadingAuth, setLoadingAuth] = useState(true)
   const [loadingCases, setLoadingCases] = useState(false)
   const [loadingUsers, setLoadingUsers] = useState(false)
@@ -194,6 +202,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         email: u.email || '',
         role: u.role === 'administrator' ? 'admin' : 'investigator',
         status: u.is_active ? 'Active' : 'Inactive',
+        onboardingStatus: u.onboarding_status || 'completed',
+        invitedAt: u.invited_at ?? null,
         created: u.created_at,
       }))
       setUsers(mapped)
@@ -245,12 +255,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [me])
 
+  const readMfaStatus = useCallback(async (): Promise<{ level: 'aal1' | 'aal2'; hasVerified: boolean }> => {
+    try {
+      const [{ data: aalData }, { data: factorData }] = await Promise.all([
+        supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
+        supabase.auth.mfa.listFactors(),
+      ])
+      const verifiedTotp = (factorData?.totp || []).some((f) => f.status === 'verified')
+      const level = aalData?.currentLevel === 'aal2' ? 'aal2' : 'aal1'
+      return { level, hasVerified: verifiedTotp }
+    } catch {
+      return { level: 'aal1', hasVerified: false }
+    }
+  }, [])
+
   // Restore authenticated session on mount and load profile
   const initUserSession = useCallback(async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
         setMe(null)
+        setAal(null)
+        setHasVerifiedMfa(false)
         setLoadingAuth(false)
         return
       }
@@ -259,10 +285,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!profile.is_active) {
         await supabase.auth.signOut().catch(() => {})
         setMe(null)
+        setAal(null)
+        setHasVerifiedMfa(false)
         setLoadingAuth(false)
         toast('Account is inactive. Please contact an administrator.', 'error')
         return
       }
+
+      const mfaState = await readMfaStatus()
+      const resolvedAal = profile.aal || mfaState.level
 
       const currentUser: User = {
         id: profile.id,
@@ -270,16 +301,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         email: session.user.email || '',
         role: profile.role === 'administrator' ? 'admin' : 'investigator',
         status: profile.is_active ? 'Active' : 'Inactive',
+        onboardingStatus: profile.onboarding_status || 'completed',
+        invitedAt: profile.invited_at ?? null,
         created: profile.created_at,
       }
       setMe(currentUser)
+      setAal(resolvedAal)
+      setHasVerifiedMfa(mfaState.hasVerified)
     } catch (err: any) {
       console.warn('Session initialization error:', err)
       setMe(null)
+      setAal(null)
+      setHasVerifiedMfa(false)
     } finally {
       setLoadingAuth(false)
     }
-  }, [toast])
+  }, [readMfaStatus, toast])
 
   useEffect(() => {
     initUserSession()
@@ -287,6 +324,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event) => {
       if (event === 'SIGNED_OUT') {
         setMe(null)
+        setAal(null)
+        setHasVerifiedMfa(false)
         setCases([])
         setUsers([])
         setEvidence([])
@@ -308,9 +347,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [initUserSession])
 
-  // Load cases, users, evidence, and audit logs whenever user profile is authenticated
+  // Load cases, users, evidence, and audit logs only when fully onboarded AND AAL2 MFA-verified
   useEffect(() => {
-    if (me) {
+    if (me && me.onboardingStatus === 'completed' && aal === 'aal2') {
       refreshCases()
       refreshUsers()
       refreshEvidence()
@@ -318,9 +357,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         refreshAudit()
       }
     }
-  }, [me, refreshCases, refreshUsers, refreshEvidence, refreshAudit])
+  }, [me, aal, refreshCases, refreshUsers, refreshEvidence, refreshAudit])
 
-  const login = async (email: string, pass: string): Promise<{ ok: boolean; error?: string }> => {
+  const login = async (
+    email: string,
+    pass: string,
+  ): Promise<{ ok: boolean; error?: string; nextStep?: 'mfa-setup' | 'mfa-verify' | 'dashboard' }> => {
     isLoggingIn.current = true
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -352,17 +394,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return { ok: false, error: 'Your account is deactivated. Contact an administrator.' }
       }
 
+      if (profile.onboarding_status === 'invited') {
+        await supabase.auth.signOut().catch(() => {})
+        return { ok: false, error: 'Please complete password setup from your invitation link before signing in.' }
+      }
+
+      const mfaState = await readMfaStatus()
+      const resolvedAal = profile.aal || mfaState.level
+
       const currentUser: User = {
         id: profile.id,
         name: profile.full_name,
         email: data.session.user.email || email,
         role: profile.role === 'administrator' ? 'admin' : 'investigator',
         status: profile.is_active ? 'Active' : 'Inactive',
+        onboardingStatus: profile.onboarding_status || 'completed',
+        invitedAt: profile.invited_at ?? null,
         created: profile.created_at,
       }
       setMe(currentUser)
-      await api.auth.logEvent('USER_LOGIN').catch(() => {})
-      return { ok: true }
+      setAal(resolvedAal)
+      setHasVerifiedMfa(mfaState.hasVerified)
+
+      if (resolvedAal === 'aal2' && currentUser.onboardingStatus === 'completed') {
+        return { ok: true, nextStep: 'dashboard' }
+      }
+      return { ok: true, nextStep: mfaState.hasVerified ? 'mfa-verify' : 'mfa-setup' }
     } catch (err: any) {
       return { ok: false, error: err.detail || err.message || 'Authentication failed' }
     } finally {
@@ -370,10 +427,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const completeMfaLogin = async (action: 'enroll' | 'verify'): Promise<void> => {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      throw new Error('Authentication session expired. Please sign in again.')
+    }
+    const updated = await api.auth.completeMfaLogin(action, session.access_token)
+    setAal('aal2')
+    setHasVerifiedMfa(true)
+    setMe((prev) =>
+      prev
+        ? {
+            ...prev,
+            onboardingStatus: updated.onboarding_status || 'completed',
+          }
+        : prev,
+    )
+  }
+
   const logout = async () => {
     await api.auth.logEvent('USER_LOGOUT').catch(() => {})
     await supabase.auth.signOut()
     setMe(null)
+    setAal(null)
+    setHasVerifiedMfa(false)
     setCases([])
     setUsers([])
   }
@@ -582,6 +659,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const resendInvite = async (userId: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      await api.users.resendInvite(userId)
+      await refreshUsers()
+      await refreshAudit()
+      return { ok: true }
+    } catch (err: any) {
+      return { ok: false, error: err?.detail || err?.message || 'Failed to resend invitation' }
+    }
+  }
+
+  const resetUserMfa = async (userId: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      await api.users.resetMfa(userId)
+      await refreshUsers()
+      await refreshAudit()
+      return { ok: true }
+    } catch (err: any) {
+      return { ok: false, error: err?.detail || err?.message || 'Failed to reset MFA' }
+    }
+  }
+
+  const setupPassword = async (password: string, confirmPassword: string): Promise<void> => {
+    await api.auth.setupPassword(password, confirmPassword)
+    // Terminate the invitation session so the user must sign in with their new password to activate
+    await supabase.auth.signOut().catch(() => {})
+    setMe(null)
+  }
+
   const renameMe = async (name: string, email?: string): Promise<void> => {
     await api.users.updateProfileMe({ full_name: name, ...(email ? { email } : {}) })
     if (me) {
@@ -600,12 +706,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     notes,
     audit,
     me,
+    aal,
+    hasVerifiedMfa,
     isAdmin: !!isAdmin,
     loadingAuth,
     loadingCases,
     loadingUsers,
     loadingEvidence,
     login,
+    completeMfaLogin,
     logout,
     refreshCases,
     refreshUsers,
@@ -628,6 +737,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     transferPermission,
     transferCustody,
     saveUser,
+    resendInvite,
+    resetUserMfa,
+    setupPassword,
     renameMe,
     toasts,
     toast,

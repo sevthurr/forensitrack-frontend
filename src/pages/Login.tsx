@@ -5,7 +5,7 @@ import { useApp } from '../store/AppContext'
 import { Button, Field, Input, Logo } from '../components/ui'
 
 export default function Login() {
-  const { me, login } = useApp()
+  const { me, aal, hasVerifiedMfa, login } = useApp()
   const nav = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -14,7 +14,11 @@ export default function Login() {
   const [authError, setAuthError] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
-  if (me) return <Navigate to="/" replace />
+  if (me) {
+    if (me.onboardingStatus === 'invited') return <Navigate to="/accept-invite" replace />
+    if (aal !== 'aal2') return <Navigate to={hasVerifiedMfa ? '/mfa-verify' : '/mfa-setup'} replace />
+    return <Navigate to="/" replace />
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -31,6 +35,10 @@ export default function Login() {
 
     if (!res.ok) {
       setAuthError(res.error || 'Authentication failed. Please verify your credentials.')
+    } else if (res.nextStep === 'mfa-verify') {
+      nav('/mfa-verify')
+    } else if (res.nextStep === 'mfa-setup') {
+      nav('/mfa-setup')
     } else {
       nav('/')
     }

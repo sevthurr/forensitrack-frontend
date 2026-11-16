@@ -3,6 +3,9 @@ import { AppProvider } from './store/AppContext'
 import { ToastHost } from './components/ui'
 import { Layout, NotFound, RequireAdmin } from './components/Layout'
 import Login from './pages/Login'
+import AcceptInvite from './pages/AcceptInvite'
+import MfaSetup from './pages/MfaSetup'
+import MfaVerify from './pages/MfaVerify'
 import Dashboard from './pages/Dashboard'
 import Cases from './pages/Cases'
 import CaseDetail from './pages/CaseDetail'
@@ -16,6 +19,9 @@ import Profile from './pages/Profile'
 
 const router = createHashRouter([
   { path: '/login', Component: Login },
+  { path: '/accept-invite', Component: AcceptInvite },
+  { path: '/mfa-setup', Component: MfaSetup },
+  { path: '/mfa-verify', Component: MfaVerify },
   {
     path: '/',
     Component: Layout,

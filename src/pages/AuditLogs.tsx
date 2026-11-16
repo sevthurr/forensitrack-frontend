@@ -18,6 +18,11 @@ const ACTION_LABELS: Record<string, string> = {
   USER_LOGIN: 'User Signed In',
   USER_LOGOUT: 'User Signed Out',
   PASSWORD_CHANGED: 'Password Changed',
+  ACCOUNT_SETUP_COMPLETED: 'Account Setup Completed',
+  ACCOUNT_ACTIVATED: 'Account Activated',
+  MFA_ENROLLED: 'MFA Enrolled',
+  MFA_VERIFIED: 'MFA Verified',
+  MFA_RESET: 'MFA Reset',
   CASE_CREATED: 'Case Created',
   CASE_UPDATED: 'Case Updated',
   CASE_STATUS_CHANGED: 'Case Status Changed',
@@ -30,6 +35,8 @@ const ACTION_LABELS: Record<string, string> = {
   EVIDENCE_VERIFIED_STORED: 'Evidence Verified (Stored)',
   EVIDENCE_VERIFIED_UPLOAD: 'Evidence Verified (Upload)',
   CUSTODY_TRANSFER: 'Custody Transferred',
+  USER_INVITED: 'User Invited',
+  INVITATION_RESENT: 'Invitation Resent',
   USER_CREATED: 'User Created',
   USER_UPDATED: 'User Updated',
   USER_STATUS_CHANGED: 'User Status Changed',
@@ -39,7 +46,7 @@ const ACTION_LABELS: Record<string, string> = {
 function getActionCategory(action: string, recordType?: string): string {
   const a = action.toUpperCase()
   const rt = (recordType || '').toUpperCase()
-  if (a.includes('LOGIN') || a.includes('LOGOUT') || a.includes('PASSWORD') || rt === 'AUTH') return 'security'
+  if (a.includes('LOGIN') || a.includes('LOGOUT') || a.includes('PASSWORD') || a.includes('SETUP') || a.includes('MFA') || a.includes('ACTIVATED') || rt === 'AUTH') return 'security'
   if (a.includes('VERIF')) return 'verification'
   if (a.includes('CUSTODY')) return 'custody'
   if (a.includes('EVIDENCE')) return 'evidence'

@@ -4,6 +4,7 @@ import { ChevronDown, CircleUser, FolderOpen, LayoutDashboard, LogOut, Menu, Pac
 import { useApp } from '../store/AppContext'
 import { Badge, Logo } from './ui'
 import { cn, initials } from '../lib/utils'
+import AcceptInvite from '../pages/AcceptInvite'
 
 export function AccessDenied() {
   return (
@@ -33,7 +34,7 @@ export function RequireAdmin() {
 }
 
 export function Layout() {
-  const { me, isAdmin, logout, userName, loadingAuth } = useApp()
+  const { me, aal, hasVerifiedMfa, isAdmin, logout, userName, loadingAuth } = useApp()
   const nav = useNavigate()
   const loc = useLocation()
   const [collapsed, setCollapsed] = useState(false)
@@ -50,7 +51,17 @@ export function Layout() {
     )
   }
 
+  const hasAuthCallback =
+    window.location.search.includes('code=') ||
+    window.location.search.includes('error=') ||
+    window.location.hash.includes('access_token=') ||
+    window.location.hash.includes('error=')
+
+  if (hasAuthCallback) return <AcceptInvite />
   if (!me) return <Navigate to="/login" replace />
+  if (me.onboardingStatus === 'invited') return <Navigate to="/accept-invite" replace />
+  if (aal !== 'aal2') return <Navigate to={hasVerifiedMfa ? '/mfa-verify' : '/mfa-setup'} replace />
+  if (me.onboardingStatus !== 'completed') return <Navigate to="/login" replace />
 
   const groups = [
     { label: 'Overview', items: [{ to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true }] },

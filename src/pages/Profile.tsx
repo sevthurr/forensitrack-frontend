@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ShieldCheck } from 'lucide-react'
 import { useApp } from '../store/AppContext'
 import { supabase } from '../lib/supabase'
 import { api } from '../services/api'
@@ -18,7 +18,7 @@ function splitName(fullName?: string): [string, string] {
 }
 
 export default function Profile() {
-  const { me, isAdmin, renameMe, toast } = useApp()
+  const { me, aal, hasVerifiedMfa, isAdmin, renameMe, toast } = useApp()
   const [tab, setTab] = useState('profile')
   const [initFirst, initLast] = splitName(me!.name)
   const [firstName, setFirstName] = useState(initFirst)
@@ -152,24 +152,51 @@ export default function Profile() {
       )}
 
       {tab === 'security' && (
-        <Card className="p-5 sm:p-6">
-          <SectionTitle>Change Password</SectionTitle>
-          <form onSubmit={savePassword} className="space-y-4">
-            <Field label="Current Password">
-              <Input type="password" value={currPass} maxLength={128} onChange={(e) => setCurrPass(e.target.value)} placeholder="••••••••" disabled={savingPass} />
-            </Field>
-            <Field label="New Password">
-              <Input type="password" value={newPass} maxLength={128} onChange={(e) => setNewPass(e.target.value)} placeholder="••••••••" disabled={savingPass} />
-            </Field>
-            <Field label="Confirm New Password">
-              <Input type="password" value={confirmPass} maxLength={128} onChange={(e) => setConfirmPass(e.target.value)} placeholder="••••••••" disabled={savingPass} />
-            </Field>
-            <Button type="submit" variant="primary" disabled={savingPass} className="flex items-center gap-2">
-              {savingPass && <Loader2 size={14} className="animate-spin" />}
-              {savingPass ? 'Updating…' : 'Update Password'}
-            </Button>
-          </form>
-        </Card>
+        <div className="space-y-6">
+          <Card className="p-5 sm:p-6 space-y-4">
+            <div className="flex items-center gap-2">
+              <ShieldCheck size={18} className="text-gold" />
+              <SectionTitle>Multi-Factor Authentication</SectionTitle>
+            </div>
+            <MetaCard
+              cols={2}
+              items={[
+                {
+                  label: 'MFA Status',
+                  value: (
+                    <span className="inline-flex items-center gap-2">
+                      <span className={cn('h-2 w-2 rounded-full', hasVerifiedMfa && aal === 'aal2' ? 'bg-ok' : 'bg-gold')} />
+                      {hasVerifiedMfa && aal === 'aal2' ? 'Enabled' : 'Not Enrolled'}
+                    </span>
+                  ),
+                },
+                { label: 'Authenticator Method', value: 'Authenticator App (Google Authenticator / TOTP)' },
+              ]}
+            />
+            <p className="text-xs text-mute leading-relaxed">
+              Multi-factor authentication is mandatory for all ForensiTrack accounts and cannot be disabled. If you lose access to your authenticator or replace your device, contact an Administrator to reset your MFA factor so you can enroll a new authenticator on your next sign-in.
+            </p>
+          </Card>
+
+          <Card className="p-5 sm:p-6">
+            <SectionTitle>Change Password</SectionTitle>
+            <form onSubmit={savePassword} className="space-y-4">
+              <Field label="Current Password">
+                <Input type="password" value={currPass} maxLength={128} onChange={(e) => setCurrPass(e.target.value)} placeholder="••••••••" disabled={savingPass} />
+              </Field>
+              <Field label="New Password">
+                <Input type="password" value={newPass} maxLength={128} onChange={(e) => setNewPass(e.target.value)} placeholder="••••••••" disabled={savingPass} />
+              </Field>
+              <Field label="Confirm New Password">
+                <Input type="password" value={confirmPass} maxLength={128} onChange={(e) => setConfirmPass(e.target.value)} placeholder="••••••••" disabled={savingPass} />
+              </Field>
+              <Button type="submit" variant="primary" disabled={savingPass} className="flex items-center gap-2">
+                {savingPass && <Loader2 size={14} className="animate-spin" />}
+                {savingPass ? 'Updating…' : 'Update Password'}
+              </Button>
+            </form>
+          </Card>
+        </div>
       )}
     </div>
   )

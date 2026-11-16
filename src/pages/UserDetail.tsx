@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { ArrowLeft, Pencil, Power } from 'lucide-react'
+import { ArrowLeft, Loader2, Mail, Pencil, Power, ShieldAlert } from 'lucide-react'
 import { useApp } from '../store/AppContext'
 import { Button, Card, ConfirmDialog, DataTable, EmptyState, LinkCell, MetaCard, Modal, Mono, PageHeader, StatusBadge, Tabs } from '../components/ui'
 import { UserForm } from './Users'
@@ -9,10 +9,12 @@ import { cn, fmtD, initials } from '../lib/utils'
 export default function UserDetail() {
   const { id } = useParams()
   const nav = useNavigate()
-  const { users, cases, me, saveUser, toast } = useApp()
+  const { users, cases, me, saveUser, resendInvite, resetUserMfa, toast } = useApp()
   const [tab, setTab] = useState('active')
   const [edit, setEdit] = useState(false)
   const [toggle, setToggle] = useState(false)
+  const [confirmResetMfa, setConfirmResetMfa] = useState(false)
+  const [resending, setResending] = useState(false)
 
   const u = users.find((x) => x.id === id)
   if (!u) {
@@ -54,7 +56,27 @@ export default function UserDetail() {
         description={u.email || 'No email recorded'}
         actions={
           <>
+            {u.onboardingStatus !== 'completed' && u.status === 'Active' && (
+              <Button
+                disabled={resending}
+                onClick={async () => {
+                  setResending(true)
+                  const res = await resendInvite(u.id)
+                  setResending(false)
+                  toast(res.ok ? `Invitation resent to ${u.email || u.name}` : res.error ?? 'Failed to resend invitation', res.ok ? 'success' : 'error')
+                }}
+              >
+                {resending ? <Loader2 size={15} className="animate-spin" /> : <Mail size={15} />}
+                Resend Invite
+              </Button>
+            )}
             <Button onClick={() => setEdit(true)}><Pencil size={15} />Edit User</Button>
+            {u.id !== me?.id && (
+              <Button onClick={() => setConfirmResetMfa(true)}>
+                <ShieldAlert size={15} />
+                Reset MFA
+              </Button>
+            )}
             <Button
               variant={u.status === 'Active' ? 'danger' : 'secondary'}
               disabled={u.id === me?.id && u.status === 'Active'}
@@ -86,10 +108,28 @@ export default function UserDetail() {
             {
               label: 'Account Status',
               value: (
-                <span className="inline-flex items-center gap-2">
-                  <span className={cn('h-2 w-2 rounded-full', u.status === 'Active' ? 'bg-ok' : 'bg-bad')} />
-                  {u.status}
-                </span>
+                <div className="space-y-1">
+                  <span className="inline-flex items-center gap-2">
+                    <span
+                      className={cn(
+                        'h-2 w-2 rounded-full',
+                        u.status === 'Inactive'
+                          ? 'bg-bad'
+                          : u.onboardingStatus && u.onboardingStatus !== 'completed'
+                            ? 'bg-gold'
+                            : 'bg-ok',
+                      )}
+                    />
+                    {u.status === 'Inactive'
+                      ? 'Inactive'
+                      : u.onboardingStatus && u.onboardingStatus !== 'completed'
+                        ? 'Pending Invite'
+                        : 'Active'}
+                  </span>
+                  {u.status === 'Active' && u.onboardingStatus === 'password_set' && (
+                    <p className="text-xs text-mute">Password set — awaiting first sign-in to activate.</p>
+                  )}
+                </div>
               ),
             },
             { label: 'Member Since', value: fmtD(u.created), mono: true },
@@ -143,6 +183,19 @@ export default function UserDetail() {
         onConfirm={async () => {
           const res = await saveUser({ ...u, status: u.status === 'Active' ? 'Inactive' : 'Active' })
           toast(res.ok ? 'Account status updated' : res.error ?? 'Not allowed', res.ok ? 'success' : 'error')
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmResetMfa}
+        onClose={() => setConfirmResetMfa(false)}
+        danger
+        title="Reset user MFA?"
+        message={`This removes ${u.name}'s Google Authenticator factor and invalidates their active sessions. They will be required to enroll a new authenticator on their next sign-in.`}
+        confirmLabel="Reset MFA"
+        onConfirm={async () => {
+          const res = await resetUserMfa(u.id)
+          toast(res.ok ? `MFA reset for ${u.name}` : res.error ?? 'Failed to reset MFA', res.ok ? 'success' : 'error')
         }}
       />
     </>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Loader2, Pencil, Plus, Power } from 'lucide-react'
+import { Loader2, Mail, Pencil, Plus, Power } from 'lucide-react'
 import { useApp } from '../store/AppContext'
 import { Button, ConfirmDialog, DataTable, Field, FilterSelect, Input, Modal, ModalActions, PageHeader, SearchInput, Select, Mono } from '../components/ui'
 import { cn, fmtD } from '../lib/utils'
@@ -67,7 +67,7 @@ export function UserForm({ initial, onClose }: { initial?: User; onClose: () => 
       setPending(null)
       return setErrors({ form: res.error ?? 'This change is not allowed.' })
     }
-    toast(initial ? 'User updated' : 'User added (Temp password: ForensiTrack@2026)')
+    toast(initial ? 'User updated' : `Invitation sent to ${email.trim()}`)
     onClose()
   }
 
@@ -115,8 +115,7 @@ export function UserForm({ initial, onClose }: { initial?: User; onClose: () => 
 
         {!initial && (
           <p className="text-xs text-mute">
-            New accounts are created as <span className="text-ink">Active</span> with temporary password{' '}
-            <span className="font-mono text-gold">ForensiTrack@2026</span>.
+            An invitation email with a single-use password setup link will be sent to this address.
           </p>
         )}
         {isSelf && <p className="text-xs text-mute">You cannot change your own role or deactivate your own account.</p>}
@@ -126,7 +125,7 @@ export function UserForm({ initial, onClose }: { initial?: User; onClose: () => 
           <Button type="button" onClick={onClose} disabled={submitting}>Cancel</Button>
           <Button type="submit" variant="primary" disabled={submitting} className="flex items-center gap-2">
             {submitting && <Loader2 size={14} className="animate-spin" />}
-            {initial ? 'Save Changes' : 'Add User'}
+            {initial ? 'Save Changes' : 'Send Invitation'}
           </Button>
         </ModalActions>
       </form>
@@ -136,22 +135,38 @@ export function UserForm({ initial, onClose }: { initial?: User; onClose: () => 
 }
 
 export default function UsersPage() {
-  const { users, me, saveUser, toast, loadingUsers } = useApp()
+  const { users, me, saveUser, resendInvite, toast, loadingUsers } = useApp()
   const nav = useNavigate()
   const [q, setQ] = useState('')
   const [roleFilter, setRoleFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
   const [add, setAdd] = useState(false)
   const [edit, setEdit] = useState<User | null>(null)
   const [toggle, setToggle] = useState<User | null>(null)
+  const [resendingId, setResendingId] = useState<string | null>(null)
+
+  const handleResend = async (u: User) => {
+    setResendingId(u.id)
+    const res = await resendInvite(u.id)
+    setResendingId(null)
+    toast(res.ok ? `Invitation resent to ${u.email || u.name}` : res.error ?? 'Failed to resend invitation', res.ok ? 'success' : 'error')
+  }
+
+  const getUserDisplayStatus = (u: User): 'Inactive' | 'Pending Invite' | 'Active' => {
+    if (u.status === 'Inactive') return 'Inactive'
+    if (u.onboardingStatus && u.onboardingStatus !== 'completed') return 'Pending Invite'
+    return 'Active'
+  }
 
   const rows = useMemo(
     () =>
       users.filter((u) => {
         const matchesRole = !roleFilter || u.role === roleFilter
+        const matchesStatus = !statusFilter || getUserDisplayStatus(u) === statusFilter
         const matchesQuery = !q || (u.name + (u.email || '')).toLowerCase().includes(q.toLowerCase())
-        return matchesRole && matchesQuery
+        return matchesRole && matchesStatus && matchesQuery
       }),
-    [users, q, roleFilter],
+    [users, q, roleFilter, statusFilter],
   )
 
   return (
@@ -159,7 +174,7 @@ export default function UsersPage() {
       <PageHeader
         title="User Management"
         description="Administrator and Investigator accounts."
-        actions={<Button variant="primary" onClick={() => setAdd(true)}><Plus size={16} />Add User</Button>}
+        actions={<Button variant="primary" onClick={() => setAdd(true)}><Plus size={16} />Invite User</Button>}
       />
       <div className="flex flex-col sm:flex-row gap-3 mb-4">
         <SearchInput className="flex-1 sm:max-w-md" value={q} onChange={setQ} placeholder="Search by name or email…" />
@@ -170,6 +185,16 @@ export default function UsersPage() {
           options={[
             { value: 'admin', label: 'Administrator' },
             { value: 'investigator', label: 'Investigator' },
+          ]}
+        />
+        <FilterSelect
+          label="All statuses"
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={[
+            { value: 'Pending Invite', label: 'Pending Invite' },
+            { value: 'Active', label: 'Active' },
+            { value: 'Inactive', label: 'Inactive' },
           ]}
         />
       </div>
@@ -186,19 +211,34 @@ export default function UsersPage() {
           {
             key: 's',
             header: 'Account Status',
-            cell: (u) => (
-              <span className="inline-flex items-center gap-2 text-sm text-ink">
-                <span className={cn('h-2 w-2 rounded-full', u.status === 'Active' ? 'bg-ok' : 'bg-bad')} />
-                {u.status}
-              </span>
-            ),
+            cell: (u) => {
+              const displayStatus = getUserDisplayStatus(u)
+              const dotClass =
+                displayStatus === 'Inactive' ? 'bg-bad' : displayStatus === 'Pending Invite' ? 'bg-gold' : 'bg-ok'
+              return (
+                <span className="inline-flex items-center gap-2 text-sm text-ink">
+                  <span className={cn('h-2 w-2 rounded-full', dotClass)} />
+                  {displayStatus}
+                </span>
+              )
+            },
           },
           { key: 'd', header: 'Created', hide: 'lg', cell: (u) => <Mono>{fmtD(u.created)}</Mono> },
           {
             key: 'a',
             header: 'Actions',
             cell: (u) => (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                {u.onboardingStatus !== 'completed' && u.status === 'Active' && (
+                  <Button
+                    size="sm"
+                    disabled={resendingId === u.id}
+                    onClick={() => void handleResend(u)}
+                  >
+                    {resendingId === u.id ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+                    Resend Invite
+                  </Button>
+                )}
                 <Button size="sm" onClick={() => setEdit(u)}><Pencil size={13} />Edit</Button>
                 <Button
                   size="sm"
@@ -214,7 +254,7 @@ export default function UsersPage() {
           },
         ]}
       />
-      <Modal open={add} onClose={() => setAdd(false)} title="Add User"><UserForm onClose={() => setAdd(false)} /></Modal>
+      <Modal open={add} onClose={() => setAdd(false)} title="Invite User"><UserForm onClose={() => setAdd(false)} /></Modal>
       <Modal open={!!edit} onClose={() => setEdit(null)} title="Edit User">{edit && <UserForm initial={edit} onClose={() => setEdit(null)} />}</Modal>
       <ConfirmDialog
         open={!!toggle}

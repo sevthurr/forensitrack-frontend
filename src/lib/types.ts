@@ -8,6 +8,8 @@ export interface User {
   email: string
   role: Role
   status: 'Active' | 'Inactive'
+  onboardingStatus?: 'invited' | 'password_set' | 'completed'
+  invitedAt?: string | null
   created: string
 }
 export interface Case {

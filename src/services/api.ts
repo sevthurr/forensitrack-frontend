@@ -131,6 +131,11 @@ export interface UserProfile {
   full_name: string
   role: 'administrator' | 'investigator'
   is_active: boolean
+  onboarding_status?: 'invited' | 'password_set' | 'completed'
+  invited_at?: string | null
+  password_set_at?: string | null
+  onboarding_completed_at?: string | null
+  aal?: 'aal1' | 'aal2'
   created_at: string
   updated_at: string
 }
@@ -141,6 +146,11 @@ export interface UserListItem {
   full_name: string
   role: 'administrator' | 'investigator'
   is_active: boolean
+  onboarding_status?: 'invited' | 'password_set' | 'completed'
+  invited_at?: string | null
+  password_set_at?: string | null
+  onboarding_completed_at?: string | null
+  aal?: 'aal1' | 'aal2'
   created_at: string
   updated_at: string
 }
@@ -266,8 +276,24 @@ export const api = {
       request<UserProfile>('/api/auth/me', token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
     checkAdmin: () => request<{ message: string; role: string }>('/api/auth/admin-check'),
     checkInvestigator: () => request<{ message: string; role: string }>('/api/auth/investigator-check'),
-    logEvent: (event: 'USER_LOGIN' | 'USER_LOGOUT' | 'PASSWORD_CHANGED') =>
+    logEvent: (event: 'USER_LOGOUT' | 'PASSWORD_CHANGED') =>
       request<void>('/api/auth/audit-event', { method: 'POST', body: JSON.stringify({ event }) }),
+    setupPassword: (password: string, confirmPassword: string) =>
+      request<UserProfile>('/api/auth/setup-password', {
+        method: 'POST',
+        body: JSON.stringify({ password, confirm_password: confirmPassword }),
+      }),
+    completeMfaLogin: (action: 'enroll' | 'verify', token?: string) =>
+      request<UserProfile>('/api/auth/mfa/complete', {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+        ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+      }),
+    activate: (token?: string) =>
+      request<UserProfile>('/api/auth/activate', {
+        method: 'POST',
+        ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+      }),
   },
 
   // Dashboard
@@ -349,8 +375,12 @@ export const api = {
     list: (params?: { role?: string; is_active?: boolean; skip?: number; limit?: number }) =>
       request<{ total: number; items: UserListItem[] }>('/api/users', { params }),
     get: (id: string) => request<UserListItem>(`/api/users/${id}`),
-    create: (data: { email: string; password?: string; full_name: string; role: 'administrator' | 'investigator' }) =>
+    create: (data: { email: string; full_name: string; role: 'administrator' | 'investigator' }) =>
       request<UserListItem>('/api/users', { method: 'POST', body: JSON.stringify(data) }),
+    resendInvite: (id: string) =>
+      request<UserListItem>(`/api/users/${id}/resend-invite`, { method: 'POST' }),
+    resetMfa: (id: string) =>
+      request<UserListItem>(`/api/users/${id}/reset-mfa`, { method: 'POST' }),
     update: (id: string, data: { full_name?: string; role?: 'administrator' | 'investigator' }) =>
       request<UserListItem>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     updateStatus: (id: string, is_active: boolean) =>
